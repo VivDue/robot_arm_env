@@ -4,7 +4,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.cm import plasma
 import matplotlib.ticker as ticker
+from timer import Timer
 
+# Initialize timer object and lists to store the results and set numpy print precision 
+timer = Timer()
 np.set_printoptions(precision=3, suppress=True)
 steps       = []
 avg_steps   = []
@@ -248,7 +251,7 @@ if __name__ == "__main__":
 
     ###############################################################################     
     # split size into sections
-    sections = 4
+    sections = 2
     
     size = np.array([size[0]/sections, size[1]/sections, size[2]/sections])
     size = np.round(size, dec_obs)
@@ -256,6 +259,10 @@ if __name__ == "__main__":
     print(f'Size: {size}')
     Q_section = []
 
+    # start timer
+    timer.start()
+
+    # iterate over the sections
     for sec in range(sections):
 
         # Print the current section
@@ -332,8 +339,13 @@ if __name__ == "__main__":
                     # extract the Q values of the current section
                     Q_result[:, index] = Q_section[sec][:, index2]
 
+    
+    # timer stop
+    elapsed_time = timer.stop()
+    print(f'Elapsed time: {elapsed_time:.2f} seconds')
 
-        plot_results(env, Q_result, target_dist, avg_dist, mse, avg_mse, steps, avg_steps, epsilon, gamma)
+    # render an episode using the learned Q-values
+    plot_results(env, Q_result, target_dist, avg_dist, mse, avg_mse, steps, avg_steps, epsilon, gamma)
 
     # final training
     #num_episodes = 100
