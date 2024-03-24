@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.cm import plasma
 import matplotlib.ticker as ticker
-from timer import Timer
+from robot_arm_env.timer import Timer
 
 # Initialize timer object and lists to store the results and set numpy print precision 
 timer = Timer()
@@ -339,7 +339,7 @@ if __name__ == "__main__":
                     # extract the Q values of the current section
                     Q_result[:, index] = Q_section[sec][:, index2]
 
-    
+
     # timer stop
     elapsed_time = timer.stop()
     print(f'Elapsed time: {elapsed_time:.2f} seconds')

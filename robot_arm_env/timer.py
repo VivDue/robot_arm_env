@@ -23,12 +23,13 @@ class Timer:
     self.start_time = None  # Reset start time for next usage
     return elapsed_time
 
-# Example usage
-timer = Timer()
+if __name__ == "__main__":
+  # Example usage
+  timer = Timer()
 
-timer.start()
-# Your code to be timed here
-time.sleep(4)  # Simulate some work
+  timer.start()
+  # Your code to be timed here
+  time.sleep(4)  # Simulate some work
 
-elapsed_time = timer.stop()
-print(f"Elapsed time: {elapsed_time:.2f} seconds")
+  elapsed_time = timer.stop()
+  print(f"Elapsed time: {elapsed_time:.2f} seconds")
