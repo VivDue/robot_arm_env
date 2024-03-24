@@ -20,7 +20,6 @@ class RobotArmEnv(gym.Env):
                 #size                = [0.010, 0.010,0.010],
                 #offset              = [0.000,0.000,0.000], 
                 target_orientation  = [0,0,0],
-                tolerance           = 10,
                 dec_obs             = 3,
                 dec_act             = 1,
                 dh_matrix           = np.array([
@@ -31,8 +30,6 @@ class RobotArmEnv(gym.Env):
                                     [0        ,0.08535        ,-90     ,0],
                                     [0        ,0.0921         ,0       ,0]
                                     ])):
-
-        self.savelocation       = 'robot-arm-env//results'
 
         self.render_skip        = render_skip                               # The number of steps to skip before rendering the next frame
         self.dec_obs            = int(dec_obs)                                   # The number of decimal places for the observation space
@@ -55,14 +52,11 @@ class RobotArmEnv(gym.Env):
 
         #self.target_orientation = np.round(target_orientation,self.dec_act)                # The orientation of the robot arm
         self.target_orientation = self._tcp_pose(self.init_angles)[3:]               # The orientation of the robot arm
-
-        # tolerance for the orientation difference
-        self.tolerance          = tolerance
+        self.last_orientdiff = 0
 
         # Lower and upper bounds for the position and orientation of the toolhead
         self.lower_bound = self.start
         self.upper_bound = self.stop
-        self.last_orientdiff = 0
         #self.lower_bound = np.round(self.start - self.offset,self.dec_obs)
         #self.upper_bound = np.round(self.stop + self.offset,self.dec_obs)
 
@@ -127,14 +121,12 @@ class RobotArmEnv(gym.Env):
         # Reset the number of steps
         self.num_steps      = 0
 
-        # Reset the orientation difference
-        self.last_orientdiff = 0
-
         self.observation    = self._get_obs()
         self.info           = self._get_info()
         self.reward         = 0
 
         self.last_distance = self._distance('target')
+        self.last_orientdiff = 0
 
         if self.render_mode == "human":
             self._render_frame(False)
@@ -154,9 +146,9 @@ class RobotArmEnv(gym.Env):
         # clip all angles to +/-180 degrees
         new_angles = np.clip(new_angles, -180, 180)
 
-        #tolerance           = 10
+        tolerance           = 10
         ori_diff = self._orientation_diff()
-        ori_hold = np.all(ori_diff <= self.tolerance) or np.all(ori_diff >= (360-self.tolerance))      
+        ori_hold = np.all(ori_diff <= tolerance) or np.all(ori_diff >= (360-tolerance))      
         traj_hold = (self._distance('trajectory') < 0.03)
         bound_hold = np.all(new_tcp_pose[0:3] >= self.lower_bound) and np.all(new_tcp_pose[0:3]<= self.upper_bound) 
 
@@ -187,9 +179,12 @@ class RobotArmEnv(gym.Env):
         if self._distance('target') == 0:
             terminated = True
             print("Target reached! Episode terminated.")
+            print(f'Finish angle: {str(ori_diff)}.')
 
         # Get the new observation, reward and info
         self.reward          = self._reward()
+        #if(truncated):
+        #    self.reward  = self.reward - 2
         self.observation     = self._get_obs()
         self.info            = self._get_info()
 
@@ -198,7 +193,7 @@ class RobotArmEnv(gym.Env):
             self._render_frame(terminated)
 
         return self.observation, self.reward, terminated, truncated, self.info
-   
+
     def _orientation_diff(self):
         orientation         = self._tcp_pose(self._agent_angles)[3:]
         orientation_diff    = np.abs(self.target_orientation - orientation)
@@ -217,55 +212,6 @@ class RobotArmEnv(gym.Env):
         distance = np.round(distance,self.dec_obs)
         return distance
         
-    """def _reward(self):
-        #Calculate the reward for the agent based on the trajectory.
-        #Returns the reward as a float.
-        
-        # current target
-        #self._target_location = self.trajectory[self._current_waypoint-1] 
-        
-        # Calculate the distance between the agent and the target (current waypoint on the trajectory)
-        #distance = np.linalg.norm(self._agent_location - self._target_location)
-
-        # Reward for getting closer to the target (max reward = 1)
-        #max_distance = np.linalg.norm(self.start - self.stop)
-        #curr_distance = self._distance('target')
-        #target_reward = (1 - curr_distance/max_distance)
-        #target_reward = np.round(1/distance*0.0001,3)
-
-        # compare if current distance is smaller than the last distance
-        curr_distance   = self._distance('target')
-        max_distance    = np.round(np.linalg.norm(self.start - self.stop),self.dec_obs)
-        target_reward   = ((self.last_distance - curr_distance)/max_distance)*10
-
-        # negative reward for each step
-        step_reward = -0.001
-
-        # update last distance
-        self.last_distance = curr_distance
-
-        # Punishment for changing the orientation
-        orientation_diff = self._orientation_diff()
-        orientation_reward = -np.max(orientation_diff/360)*10
-
-        # Punishment (Negative Reward) for moving away from the trajectory
-        distance = self._distance('trajectory')
-        trajectory_reward = -distance*10
-        
-        # Reward for progress along the trajectory
-        progress_reward = 0
-        
-        # If the agent is close to the target and hasn't reached it, move to the next target
-        if distance < 0.003 and self._current_waypoint < len(self.trajectory):
-            self._current_waypoint += 1
-            progress_reward = 1
-            self.reset_angles = self._agent_angles
-            #print(f"Waypoint {self._current_waypoint}/{len(self.trajectory)} reached")
-        
-        #total_reward = dist_reward + progress_reward
-        total_reward = np.round((trajectory_reward + target_reward + step_reward),self.dec_obs)
-        return total_reward"""
-
     def _reward(self):
         """Calculate the reward for the agent based on the trajectory.
         Returns the reward as a float.
@@ -305,9 +251,9 @@ class RobotArmEnv(gym.Env):
         diff_to_last = np.max(diff_to_last)
         orientation_reward = 0
         if(diff_to_last >= 0):
-            orientation_reward = 0.04
+            orientation_reward = 0.01
         else:
-            orientation_reward = -0.08
+            orientation_reward = -0.02
 
         #orientation_reward = -np.sum(orientation_diff/360)                   #-np.max(orientation_diff/360)*100
 
@@ -342,7 +288,7 @@ class RobotArmEnv(gym.Env):
 
     def _get_info(self):
         return {
-            "joint_angles":                 self._agent_angles,
+            "agent_angles":                 self._agent_angles,
             "tcp_position":                 self._agent_location,
             "tcp_orientation":              self._tcp_pose(self._agent_angles)[3:],
             "target_distance":              self._distance('target'), 
@@ -446,7 +392,7 @@ class RobotArmEnv(gym.Env):
             self.fig = plt.figure(layout='constrained', figsize=(10, 6))
 
             # Define the grid layout (3 rows, 2 columns)
-            gs = gridspec.GridSpec(6, 2, figure=self.fig)
+            gs = gridspec.GridSpec(6, 2)
 
             # Create subplots for the remaining plots (optional)
             self.ax1 = self.fig.add_subplot(gs[:3, 0], projection='3d')
@@ -600,8 +546,8 @@ class RobotArmEnv(gym.Env):
                         self.ax.plot([x[k+1],tcp_x[n]+x[k+1]], [y[k+1],tcp_y[n]+y[k+1]], [z[k+1],tcp_z[n]+z[k+1]], color = c, markersize=5, alpha=0.7, linewidth = 1)
                     
                     # Draw plot and flush events to enable interactive mode
-                    #self.ax1.legend(loc = 'upper right',frameon = True, fancybox = True, shadow = True, framealpha = 1, prop={'size': 6})
-                    #self.ax2.legend(loc = 'upper right',frameon = True, fancybox = True, shadow = True, framealpha = 1, prop={'size': 8})
+                    self.ax1.legend(loc = 'upper right',frameon = True, fancybox = True, shadow = True, framealpha = 1, prop={'size': 6})
+                    self.ax2.legend(loc = 'upper right',frameon = True, fancybox = True, shadow = True, framealpha = 1, prop={'size': 8})
                     self.ax.tick_params(axis='both', which='major', labelsize=7, pad = -2.5)
                     self.fig.canvas.draw() # draw new contents
                     self.fig.canvas.flush_events() 
@@ -651,14 +597,12 @@ class RobotArmEnv(gym.Env):
             plt.setp(self.ax4.get_xticklabels(), visible=False)
             plt.setp(self.ax3.get_xticklabels(), visible=False)
             if end:
+                plt.savefig(f'robot_arm_env/results/robotarm_env_steps{len(self.reward_list)}.png')
                 self.close()
 
     def close(self):
         # Close the figure
         if self.fig is not None:
-            plt.savefig(f'robot-arm-env//results//robotarm_env_steps{len(self.reward_list)}')
-            #plt.savefig(f'robot-arm-env//results//mccepisodes{num_episodes}epsilon{eps_str}gamma{gamma_str}.png')
-            #plt.savefig(f'robot-arm-env//results//robotarm_env_steps{len(self.reward_list)}.png')
             plt.close(self.fig)
             self.fig = None
             self.ax = None

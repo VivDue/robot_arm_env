@@ -15,15 +15,22 @@ target_dist = []
 avg_dist    = []
 
 # Monte Carlo Control Algorithm
-def monte_carlo_control(env, num_episodes, epsilon=0.99, gamma = 0.9, Q = None):
+def monte_carlo_control(env, num_episodes, epsilon=0.99, gamma = 0.9, Q = None,deterministic = False):
     # Initialize action-value function with a small random value to prevent ties
     if Q is None:
         Q           = np.round(-0.1*np.random.rand(env.action_space.n, env.observation_space.n),6)
+    else:
+        pass# Q = np.flip(Q, axis=1)
+
     returns     = np.zeros((env.action_space.n, env.observation_space.n))
     N           = np.zeros((env.action_space.n, env.observation_space.n))
-
+    # iterate over the episodes
     for n in range(num_episodes):
-        epsilon = (epsilon/num_episodes)*n
+        #epsilon = epsilon_init*(1 - decay_rate) ** n
+        epsilon = np.exp((n/num_episodes)*-5)
+        if epsilon < 0.1 and not deterministic:
+            epsilon = 0.1
+        print(f'epsilon: {epsilon}')
         # Generate an episode
         episode = []
         error   = []
@@ -55,6 +62,7 @@ def monte_carlo_control(env, num_episodes, epsilon=0.99, gamma = 0.9, Q = None):
 
         # print general information
         print(f'Episode finished after {len(episode)} steps')
+        print(f'TCP Position: {info["tcp_position"]}')
 
         
         if terminated:
@@ -66,27 +74,27 @@ def monte_carlo_control(env, num_episodes, epsilon=0.99, gamma = 0.9, Q = None):
         print(f'Mean Squared Error: {np.mean(error)}')
         avg_mse.append(np.mean(mse))
         #print(f'Episode: {episode}')
-        if terminated:
-            # Update action-value function
-            G = 0 # return of the episode
-            #gamma = 0.9 # discount factor
-            # iterate over the episode in reverse order
-            for t in reversed(range(len(episode))):
-                state, action, reward = episode[t]
-                # sum of the rewards from the current state to the end of the episode
-                G = gamma*G + reward
-                # if the pair (state, action) has not been visited before, update the Q value
-                # (first visit of state-action pair)
-                if (state, action) not in [(x[0], x[1]) for x in episode[:t]]:
-                    returns[action, state] = returns[action, state] + G
-                    N[action, state] = N[action, state] + 1
-                    Q[action, state] = returns[action, state] / N[action, state]
+        #if terminated:
+        # Update action-value function
+        G = 0 # return of the episode
+        #gamma = 0.9 # discount factor
+        # iterate over the episode in reverse order
+        for t in reversed(range(len(episode))):
+            state, action, reward = episode[t]
+            # sum of the rewards from the current state to the end of the episode
+            G = gamma*G + reward
+            # if the pair (state, action) has not been visited before, update the Q value
+            # (first visit of state-action pair)
+            if (state, action) not in [(x[0], x[1]) for x in episode[:t]]:
+                returns[action, state] = returns[action, state] + G
+                N[action, state] = N[action, state] + 1
+                Q[action, state] = returns[action, state] / N[action, state]
         print(f'Episode {n+1}/{num_episodes} complete\n')
             # normalize the Q values and round them to 3 decimal places
             #Q = np.round(Q / np.max(Q),3)
         # return the final joint angles
-        final_joint_angles = info['joint_angles']
-        print(f'Final Joint Angles: {final_joint_angles}')
+    final_joint_angles = info['joint_angles']
+    print(f'Final Joint Angles: {final_joint_angles}')
 
     return Q, final_joint_angles
 
@@ -94,7 +102,8 @@ def plot_results(env, Q, target_dist, avg_dist, mse, avg_mse, steps, avg_steps, 
     plt.style.use('seaborn-v0_8-whitegrid')
     # print general information
     print("Action-Value Function: \n{Q}")
-    print(f'{sum(finish)} Episodes terminated, {num_episodes-sum(finish)} Episodes truncated')
+    
+    print(f'{np.count_nonzero(finish)} Episodes terminated, {np.count_nonzero(finish == 0)} Episodes truncated')
 
     # create a figure 
     fig = plt.figure(layout='constrained', figsize=(10, 6))
@@ -114,8 +123,6 @@ def plot_results(env, Q, target_dist, avg_dist, mse, avg_mse, steps, avg_steps, 
     ax1.set_xlabel('$Episode$')
     ax1.set_ylabel('$Stepcount$')
     
-
-
     # [2] plot the mean squared error per episode
     ax2 = fig.add_subplot(222)
     mse = np.array(mse)*1000*1000
@@ -154,6 +161,7 @@ def plot_results(env, Q, target_dist, avg_dist, mse, avg_mse, steps, avg_steps, 
     #Q = (Q - np.min(Q))/(np.max(Q) - np.min(Q))
     q_max = np.amax(Q, axis=0)
     q_max = np.reshape(q_max, size, order = 'F')
+    #q_max = np.flip(q_max, axis=1)
     #q_max = np.reshape(q_max, (11, 11, 11), order = 'F')
     # create a 3d voxel plot of the data where the values are represented by the color of the voxels
     # Create the 3D voxel plot (consider using colormaps for better visualization)
@@ -161,13 +169,14 @@ def plot_results(env, Q, target_dist, avg_dist, mse, avg_mse, steps, avg_steps, 
     ax4.set_position([0.53, 0.05, 0.45, 0.35])
 
     # Apply the colormap
+    q_bool = q_max > -100  # Define a boolean mask for data
+    q_max = np.where(q_max > -100, q_max, np.max(q_max)) # replace values smaller -100 with max value to show only relevant data
     cmap = plasma  # Replace with your chosen colormap
     norm = plt.Normalize(q_max.min(), q_max.max())  # Normalize data for colormap
     colors = cmap(norm(q_max))  # Map Q-values to colormap
 
     # Create voxels with color
-    q_bool = q_max > 0.00001  # Define a boolean mask for data
-    ax4.voxels(q_max, facecolors=colors, shade = False, alpha = 0.5)
+    ax4.voxels(q_bool, facecolors=colors, shade = False, alpha = 0.5)
     ax4.set_title('Max(Q) Values')
     ax4.set_xlabel('X')
     ax4.set_ylabel('Y')
@@ -218,8 +227,9 @@ if __name__ == "__main__":
     render_skip         = 100
     max_steps           = 5000
     init_angles         = [90,  -45, -90, -135, 0, 45]
-    size                = [0.002, 0.004 ,0.003]
+    size                = [0.008, 0.016 ,0.012]
     target_orientation  = [0,0,0]
+    tolerance           = 10
     dec_obs             = 3
     dec_act             = 1
     dh_matrix           = np.array([
@@ -232,36 +242,107 @@ if __name__ == "__main__":
                         ])
     
     # Define the number of episodes for Monte Carlo control
-    num_episodes    = 10
+    num_episodes    = 500
     epsilon         = 1
     gamma           = 0.99
 
-
-    # Initialize the Gym environment
-    env = RobotArmEnv(render_mode, render_skip, 
-                      max_steps, init_angles, size, 
-                      target_orientation, 
-                      dec_obs, dec_act, dh_matrix) 
+    ###############################################################################     
+    # split size into sections
+    sections = 4
     
-    # Print the action and observation space of the environment
-    print(f'Action: {env.action_space.n}')
-    print(f'Observation Space:{env.observation_space.n}')
+    size = np.array([size[0]/sections, size[1]/sections, size[2]/sections])
+    size = np.round(size, dec_obs)
+    print(f'#'*100)
+    print(f'Size: {size}')
+    Q_section = []
 
-    # Run Monte Carlo control algorithm
-    Q, joint_angles = monte_carlo_control(env, num_episodes, epsilon, gamma)
-    np.savetxt("Q.csv", Q, delimiter=",")
+    for sec in range(sections):
 
-    # Plot results
-    plot_results(env, Q, target_dist, avg_dist, mse, avg_mse, steps, avg_steps, epsilon, gamma)
-    epsilon = 0.01
+        # Print the current section
+        print(f'Section {sec+1}/{sections}')
 
-    # Render an episode using the learned Q-values to visualize the results
+        # Initialize the Gym environment
+        env = RobotArmEnv(render_mode, render_skip, 
+                        max_steps, init_angles, size, 
+                        target_orientation,tolerance, 
+                        dec_obs, dec_act, dh_matrix) 
+        
+        # Print the action and observation space of the environment
+        print(f'Action: {env.action_space.n}')
+        print(f'Observation Space:{env.observation_space.n}')
+        
+        # Run Monte Carlo control algorithm
+        Q, init_angles = monte_carlo_control(env, num_episodes, epsilon, gamma)
+
+        # Deterministic Angle finding
+        temp_epsilon = 0 
+        temp_num_episodes = 1
+        Q, init_angles = monte_carlo_control(env, temp_num_episodes, temp_epsilon, gamma, deterministic = True)
+        
+        # Append the Q values of the current section to the Q_section list
+        Q_section.append(Q)
+
+        # Plot results
+        #plot_results(env, Q, target_dist, avg_dist, mse, avg_mse, steps, avg_steps, epsilon, gamma)
+        #epsilon = 0.01
+
+    
+    # Stitch all sections together and render an episode using the learned Q-values to visualize the results
+    # create final enviroment
+    print(f'#'*100)
+    print(f'Final Environment')
+    size = size*sections
+    print(f'Size: {size}')
+
     render_mode = 'human'
-    num_episodes = 1
+    tolerance   = 180
     env = RobotArmEnv(render_mode, render_skip, 
-                      max_steps, init_angles, size, 
-                      target_orientation, 
-                      dec_obs, dec_act, dh_matrix) 
-    render_episode(env, Q)
-    monte_carlo_control(env, num_episodes, Q = Q)
-   
+                    max_steps, init_angles, size, 
+                    target_orientation, tolerance,
+                    dec_obs, dec_act, dh_matrix) 
+    
+    # create a new Q matrix to store the final Q values
+    Q_result = -100*np.ones((env.action_space.n, env.observation_space.n))
+    
+    # insert section Q values into the final Q matrix
+    for sec in range(sections):
+        env_dim = env.size                         # get total dimensions
+        sec_size = env_dim//sections               # get section dimensions
+        sec_offset = (env.size)//sections*sec      # calculate x,y,z offset of each section
+
+        # start and end x,y,z coordinates of the current section
+        start = sec_offset.astype(int)
+        end = (sec_offset+sec_size+1).astype(int) # +1 to include the last element
+        #print(f'Start: {start}')
+        #print(f'End: {end}')
+        
+        # iterate over the section and insert the Q values into the final Q matrix
+        for k,z in enumerate(list(range(start[2], end[2]))):
+            for l,y in enumerate((list(range(start[1], end[1])))):
+                for m,x in enumerate(list(range(start[0], end[0]))):
+                    # index of the current state in the total environment
+                    index = int(x + y*env_dim[0] + z*env_dim[0]*env_dim[1])
+                    # index of the current state in the section
+                    index2 = int(m + l*(sec_size[0]+1) + k*(sec_size[0]+1)*(sec_size[1]+1))
+                    # do not overwrite the Q value of the first state in following sections
+                    #if sec > 0 and index2 != 0:
+                        # extract the Q values of the current section
+                    #    Q_result[:, index] = Q_section[sec][:, index2]
+                    #else:
+                    # extract the Q values of the current section
+                    Q_result[:, index] = Q_section[sec][:, index2]
+
+
+        plot_results(env, Q_result, target_dist, avg_dist, mse, avg_mse, steps, avg_steps, epsilon, gamma)
+
+    # final training
+    #num_episodes = 100
+    #Q_result, _ = monte_carlo_control(env, num_episodes, epsilon, Q = Q_result)
+    #plot_results(env, Q_result, target_dist, avg_dist, mse, avg_mse, steps, avg_steps, epsilon, gamma)
+
+    # render an episode using the learned Q-values
+    epsilon = 0
+    num_episodes = 1
+    monte_carlo_control(env, num_episodes, epsilon, Q = Q_result)
+    outfile = 'robot-arm-env//results//Q_values.npy'
+    np.save(outfile, Q_result)
