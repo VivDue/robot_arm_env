@@ -1,4 +1,4 @@
-from robot_arm_env import RobotArmEnv
+from robot_arm_env.robot_arm_env import RobotArmEnv
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -30,9 +30,10 @@ def monte_carlo_control(env, num_episodes, epsilon=0.99, gamma = 0.9, Q = None,d
     # iterate over the episodes
     for n in range(num_episodes):
         #epsilon = epsilon_init*(1 - decay_rate) ** n
-        epsilon = np.exp((n/num_episodes)*-5)
-        if epsilon < 0.1 and not deterministic:
-            epsilon = 0.1
+        if not deterministic:
+            epsilon = np.exp((n/num_episodes)*-5)
+            if epsilon < 0.1:
+                epsilon = 0.1
         print(f'epsilon: {epsilon}')
         # Generate an episode
         episode = []
@@ -80,22 +81,23 @@ def monte_carlo_control(env, num_episodes, epsilon=0.99, gamma = 0.9, Q = None,d
         #if terminated:
         # Update action-value function
         G = 0 # return of the episode
-        #gamma = 0.9 # discount factor
-        # iterate over the episode in reverse order
-        for t in reversed(range(len(episode))):
-            state, action, reward = episode[t]
-            # sum of the rewards from the current state to the end of the episode
-            G = gamma*G + reward
-            # if the pair (state, action) has not been visited before, update the Q value
-            # (first visit of state-action pair)
-            if (state, action) not in [(x[0], x[1]) for x in episode[:t]]:
-                returns[action, state] = returns[action, state] + G
-                N[action, state] = N[action, state] + 1
-                Q[action, state] = returns[action, state] / N[action, state]
-        print(f'Episode {n+1}/{num_episodes} complete\n')
-            # normalize the Q values and round them to 3 decimal places
-            #Q = np.round(Q / np.max(Q),3)
-        # return the final joint angles
+        if not deterministic:
+
+            # iterate over the episode in reverse order
+            for t in reversed(range(len(episode))):
+                state, action, reward = episode[t]
+                # sum of the rewards from the current state to the end of the episode
+                G = gamma*G + reward
+                # if the pair (state, action) has not been visited before, update the Q value
+                # (first visit of state-action pair)
+                if (state, action) not in [(x[0], x[1]) for x in episode[:t]]:
+                    returns[action, state] = returns[action, state] + G
+                    N[action, state] = N[action, state] + 1
+                    Q[action, state] = returns[action, state] / N[action, state]
+            print(f'Episode {n+1}/{num_episodes} complete\n')
+                # normalize the Q values and round them to 3 decimal places
+                #Q = np.round(Q / np.max(Q),3)
+            # return the final joint angles
     final_joint_angles = info['joint_angles']
     print(f'Final Joint Angles: {final_joint_angles}')
 
@@ -228,9 +230,9 @@ if __name__ == "__main__":
     # Define all parameters of the enviroment you want to customize
     render_mode         = None
     render_skip         = 100
-    max_steps           = 5000
+    max_steps           = 50
     init_angles         = [90,  -45, -90, -135, 0, 45]
-    size                = [0.008, 0.016 ,0.012]
+    size                = [0.004, 0.008 ,0.006]
     target_orientation  = [0,0,0]
     tolerance           = 10
     dec_obs             = 3
@@ -284,7 +286,7 @@ if __name__ == "__main__":
         # Deterministic Angle finding
         temp_epsilon = 0 
         temp_num_episodes = 1
-        Q, init_angles = monte_carlo_control(env, temp_num_episodes, temp_epsilon, gamma, deterministic = True)
+        Q, init_angles = monte_carlo_control(env, temp_num_episodes, temp_epsilon, gamma, Q, deterministic = True)
         
         # Append the Q values of the current section to the Q_section list
         Q_section.append(Q)
@@ -309,7 +311,8 @@ if __name__ == "__main__":
                     dec_obs, dec_act, dh_matrix) 
     
     # create a new Q matrix to store the final Q values
-    Q_result = -100*np.ones((env.action_space.n, env.observation_space.n))
+    Q_result = np.round(-0.1*np.random.rand(env.action_space.n, env.observation_space.n),6) -100
+    #Q_result = -100*np.ones((env.action_space.n, env.observation_space.n))
     
     # insert section Q values into the final Q matrix
     for sec in range(sections):
@@ -339,6 +342,8 @@ if __name__ == "__main__":
                     # extract the Q values of the current section
                     Q_result[:, index] = Q_section[sec][:, index2]
 
+    outfile = 'robot-arm-env//results//Q_values.npy'
+    np.save(outfile, Q_result)
 
     # timer stop
     elapsed_time = timer.stop()
@@ -355,6 +360,6 @@ if __name__ == "__main__":
     # render an episode using the learned Q-values
     epsilon = 0
     num_episodes = 1
-    monte_carlo_control(env, num_episodes, epsilon, Q = Q_result)
-    outfile = 'robot-arm-env//results//Q_values.npy'
-    np.save(outfile, Q_result)
+    
+    monte_carlo_control(env, num_episodes, epsilon, Q = Q_result, deterministic = True)
+    
