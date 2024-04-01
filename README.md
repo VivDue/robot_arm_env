@@ -120,7 +120,7 @@ The demo showcases the Robot Arm Environment in action. It was trained using the
 
 The class diagram below illustrates the structure of the Robot Arm Environment codebase. It provides a visual representation of the various classes and their relationships within the environment.
 
-![Class Diagram](assets\class_diagramm.png)
+![Class Diagram](assets\class_diagramm.drawio.png)
 
 
 ### License
