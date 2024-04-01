@@ -16,7 +16,7 @@ from rl_algorithms.monte_carlo_control import MonteCarloControl
 
 import numpy as np
 
-save_location = 'examples//example_results'
+save_location = 'example_results'
 
 np.set_printoptions(precision=2, suppress=True)
 dh_matrix = np.array([  
@@ -50,6 +50,9 @@ start_angles = init_angles
 # iterate over the sections
 for sec in range(n_sections):
 
+    # Initilaize terminates variable
+    terminated = False
+
     # Print the current section
     print('#'*100 + f'\n Section {sec+1}/{n_sections} \n' +'#'*100 + '\n')
 
@@ -59,9 +62,18 @@ for sec in range(n_sections):
     # Initialize the Gym environment
     env = RobotArmEnv(robot_arm, observation_dim, render_mode=None)
     
+    
     # Run Monte Carlo control algorithm
     agent = MonteCarloControl(env, n_episodes)
-    Q, result_angles = agent.train()
+
+    # Train the agent until the episode terminates deterministically
+    while not terminated:
+        # Train the agent
+        Q, result_angles = agent.train()
+        # Check if the agent reaches the goal
+        terminated = agent.test(render_mode=None)
+        if not terminated:
+            print('\nEpisode did not terminate. Retrying...\n')
 
     # Update the initial start angle for the next section
     start_angles = result_angles
