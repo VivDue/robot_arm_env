@@ -6,96 +6,116 @@ import gymnasium as gym
 from gymnasium import spaces
 from itertools import product
 
-
 class RobotArmEnv(gym.Env):
+    """
+    A Robot Arm Environment for simulating a robotic arm with X degrees of freedom.
+
+    This class simulates a robot arm environment where the agent controls the movement 
+    of the robot arm to achieve a target pose (x,y,z,alpha,beta,gamma). 
+
+    Args:
+        robot_arm (RobotArm): 
+            A reference to a `RobotArm` object representing the simulated robot arm.
+            This object includes methods for pose detection and forward kinematics .
+
+        observation_dim (list of int): 
+            The x,y,z dimensionality of the robot arm's observation space in meters. 
+
+
+        max_steps (int, optional): 
+            The maximum number of steps allowed per episode in the environment. 
+            Defaults to 5000.
+
+        tolerances (list of float, optional): 
+            A list containing two elements representing the tolerances for 
+            successful goal achievement. The first element specifies the 
+            allowed tolerance for the end effector's position error 
+            relative to the trajectory as radius in meter. The second element specifies 
+            the allowed tolerance for the end effector's orientation error in degree. 
+            Defaults to [0.03, 10].
+
+        render_mode (str, optional): 
+            The rendering mode for the environment. 
+            Can be one of the following options:
+                * 'human' (default for some environments): Renders the environment 
+                    in a way suitable for a human observer.
+            Defaults to None.
+
+        render_skip (int, optional): 
+            The number of simulation steps to skip between rendering frames. 
+            This can be used to reduce the rendering frequency for faster 
+            visualization. Defaults to 100.
+
+        save_location (str, optional): 
+            The path to a directory where images and other data can be saved. 
+            Defaults to an empty string which results in saving 
+            the results in the project root directory.
+
+    Methods:
+        reset():
+            Resets the environment to its initial state and returns the initial observation.
+
+        step(action):
+            Executes an action in the environment and returns the resulting observation, reward, 
+            termination flag, truncation flag, and information dictionary.
+    """
+    
     metadata = {"render_modes": ["human",]}
 
     def __init__(self, 
-                render_mode         =None, 
-                render_skip         =100,
-                max_steps           = 10000,
-                init_angles         = [90,  -45, -90, -135, 0, 45],
-                #size                = [0.04, np.sqrt(0.0048),0.06],
-                size                = [0.04, 0.07 ,0.06],
-                #size                = [0.010, 0.010,0.010],
-                #offset              = [0.000,0.000,0.000], 
-                target_orientation  = [0,0,0],
-                tolerance           = 10,
-                dec_obs             = 3,
-                dec_act             = 1,
-                dh_matrix           = np.array([
-                                    [0        ,0.15185        ,90      ,0],
-                                    [-0.24355 ,0              ,0       ,0],
-                                    [-0.2132  ,0              ,0       ,0],
-                                    [0        ,0.13105        ,90      ,0],
-                                    [0        ,0.08535        ,-90     ,0],
-                                    [0        ,0.0921         ,0       ,0]
-                                    ])):
 
-        self.savelocation       = 'robot-arm-env//results'
+                robot_arm,
+                observation_dim,
 
-        self.render_skip        = render_skip                               # The number of steps to skip before rendering the next frame
-        self.dec_obs            = int(dec_obs)                                   # The number of decimal places for the observation space
-        self.dec_act            = int(dec_act)                                   # The number of decimal places for the action space
+                max_steps           = 5000,
+                tolerances          = [0.03, 10],
 
-        self.max_steps          = max_steps                                 # The maximum number of steps for an episode
-        self.num_steps          = 0                                         # The current number of steps for an episode
+                render_mode         = None, 
+                render_skip         = 100,
 
-        self.dh_matrix          = dh_matrix                                 # The Denavit-Hartenberg matrix
-        self.num_joints         = self.dh_matrix.shape[0]                   # The number of joints of the robot arm
-        self.init_angles        = np.array(init_angles[:self.num_joints])   # The initial joint angles of the robot arm                  
-
-        self.size               = np.round(np.array(size),self.dec_obs)     # The x,y,z dimensions of the voxel grid
-        #self.offset             = np.array([0.000,0.000,0.000])             # The x,y,z offset of the voxel grid
-        self.resolution         = 10**-self.dec_obs                         # The resolution of the voxel grid
+                save_location       = ''):
         
-        self.start              = np.round(self._tcp_pose(init_angles)[:3],self.dec_obs)   # The start position of the trajectory
-        self.stop               = np.round(np.add(self.start,self.size), self.dec_obs)     # The stop position of the trajectory
-        self._target_location   = self.stop                                                # The target location of the robot arm
+        self.rob = robot_arm
+        self.obs_dim = np.array(observation_dim)
 
-        #self.target_orientation = np.round(target_orientation,self.dec_act)                # The orientation of the robot arm
-        self.target_orientation = self._tcp_pose(self.init_angles)[3:]               # The orientation of the robot arm
+        self.render_skip        = render_skip          
+        self.save_location      = save_location              
+        
+        self.max_steps          = max_steps                                 
+        self.num_steps          = 0                                        
 
-        # tolerance for the orientation difference
-        self.tolerance          = tolerance
+        # Define the start and stop (xyz) positions of the trajectory
+        self.start              = np.round(self.rob.get_tcp_pose(self.rob.init)[:3],self.rob.dec[0])   
+        self.stop               = np.round(np.add(self.start,observation_dim), self.rob.dec[0])   
 
-        # Lower and upper bounds for the position and orientation of the toolhead
-        self.lower_bound = self.start
-        self.upper_bound = self.stop
+        # Define the initial pose of the agent and the target pose
+        self._agent_pose        = self.rob.get_tcp_pose(self.rob.init) 
+        self._target_pose       = np.array([*self.stop, *self.rob.get_tcp_pose(self.rob.init)[3:]]) 
+        
+        # Max tolerances for trajectory and orientation deviatons [trajectory, orientation]
+        self.tolerances         = tolerances
+        
+        # The last orientation/trajectory deviations of the robot arm
         self.last_orientdiff = 0
-        #self.lower_bound = np.round(self.start - self.offset,self.dec_obs)
-        #self.upper_bound = np.round(self.stop + self.offset,self.dec_obs)
+        self.last_distance = self._get_deviation('target')
 
         # Definition of valid Spaces for actions and observations"
-        # Position and Orientation of the Toolhead inside a 3D box with the size and offset defined above
-        # update size according to the resolution
-        self.size = np.round((self.size/self.resolution),self.dec_obs) + 1   # + 1 to include the last value
-        #size = np.round((self.size/self.resolution),self.dec_obs) + 1        # + 1 to include the last value
+
+        # The observation space is a discrete space with a size of (x,y,z) dimensions divided by the resolution
+        # To include the last value, we add 1 to the size
+        self.resolution        = 10**-self.rob.dec[0]                         
+        self.size              = np.round((self.obs_dim/self.resolution),self.rob.dec[0]) + 1 
         self.observation_space = spaces.Discrete(int(self.size[0]*self.size[1]*self.size[2]))
 
-        """self.observation_space = spaces.Dict(
-            {
-                "position":     spaces.Box(low=self.lower_bound, high=self.upper_bound, dtype=np.float32),
-                "orientation":  spaces.Box(-180, 180, shape=(3,), dtype=np.float32),
-            }
-        )"""
-        
-        # We have 3 actions per axis ("-0.1", "0", "+0.1") and 6 axis, corresponding to 3^6 = 729 possible actions.
-        possible_actions = 3**self.num_joints
+        # We have 3 actions per axis ("-0.1", "0", "+0.1") and X axis, corresponding to 3^X possible actions.
+        possible_actions = 3**self.rob.num_joints
         self.action_space = spaces.Discrete(possible_actions)
-
-        """
-        The following dictionary maps abstract actions from `self.action_space` to 
-        the movement of all axis of the robot arm.
-        """ 
         
         # Define the possible values for each axis
-        angle_resolution = 10**-self.dec_act
-        axis_possiblities = [-0.1, 0, 0.1]
+        self.axis_possiblities = [-0.1, 0, 0.1]
 
         # Generate all possible actions using itertools.product
-        action_possiblities = product(axis_possiblities, repeat=self.num_joints)
-        
+        action_possiblities = product(self.axis_possiblities, repeat=self.rob.num_joints)
         
         # Create a dictionary with the index as key and the action as value
         self._action_to_direction = {idx: action for idx, action in enumerate(action_possiblities)}
@@ -104,37 +124,49 @@ class RobotArmEnv(gym.Env):
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
 
-        """
-        If human-rendering is used, `self.fig` will be a reference
-        to the window that we draw to. 
-        It will remain `None` until human-mode is used for the
-        first time.
-        """
+        # Create Dictionary to store data for the rendered frames
+        self.episode_data = {
+            "pose"      : [[],[],[],[],[],[]],
+            "reward"    : [],
+            "avg_reward": [],
+            "deviations": [[],[],[]],
+        }
+
+        # Initialize the figure and the subplots for the render mode
         self.fig = None
-    
-    def reset(self, seed=None, options=None):
-        # We need the following line to seed self.np_random
-        super().reset(seed=seed)
+        self.ax1 = None
+        self.ax2 = None
+        self.ax3 = None
+        self.ax4 = None
+        self.ax5 = None
+          
+    def reset(self):
+        """
+        Resets the environment to its initial state and returns the initial observation.
 
-        # Set the TCP (Tool Center Point) start position 
-        self._agent_location    = self.start
-        self._target_location   = self.stop
+        Returns:
+            observation (np.array): The initial observation of the environment.
+            info (dict): An information dictionary containing details about the initial state.
+        """
+        
+        # Define the initial pose of the agent and the target pose
+        self._agent_pose    = self.rob.get_tcp_pose(self.rob.init) 
+        self._target_pose   = np.array([*self.stop, *self.rob.get_tcp_pose(self.rob.init)[3:]]) 
 
-        # reset agent to startpostion 
-        self._agent_angles = np.array(self.init_angles)
-        #self._agent_angles = np.array(self.reset_angles)
-
+        # Reset agent to startpostion 
+        self._agent_angles  = np.array(self.rob.init)
+       
         # Reset the number of steps
         self.num_steps      = 0
 
-        # Reset the orientation difference
+        # Reset last orientation and target deviation
         self.last_orientdiff = 0
+        self.last_distance = self._get_deviation('target')
 
+        # Get the new observation, reward and info
         self.observation    = self._get_obs()
         self.info           = self._get_info()
         self.reward         = 0
-
-        self.last_distance = self._distance('target')
 
         if self.render_mode == "human":
             self._render_frame(False)
@@ -142,49 +174,54 @@ class RobotArmEnv(gym.Env):
         return self.observation, self.info
 
     def step(self, action):
+        """
+        Executes an action in the environment and returns the resulting observation, reward, 
+        termination flag,truncation flag and information dictionary.
+
+        Args:
+            action (int): The action to be performed by the agent. The action represents 
+                          a combination of joint movements for the robot arm.
+
+        Returns:
+            observation (np.array): The observation of the environment after the action is taken.
+            reward (float): The reward received by the agent for the action taken.
+            terminated (bool): Whether the episode has terminated.
+            truncated (bool): Whether the episode has finished prematurely.
+            info (dict): An information dictionary containing details about the step, 
+                         including rewards and deviations.
+        """
         # Map the action (element of {0,...,729}) to the direction we walk in
-        self.update_angles  = self._action_to_direction[action]
-        new_angles          = self._agent_angles + self.update_angles
-        new_tcp_pose        = self._tcp_pose(new_angles)
+        update_angles = self._action_to_direction[action]
+        new_angles    = self._agent_angles + update_angles
+        new_tcp_pose  = self.rob.get_tcp_pose(new_angles)
 
-        # check if termination or truncations requirements are met
-        truncated = False
-        terminated = False
+        # Check if termination or truncations requirements are met
+        truncated   = False
+        terminated  = False
 
-        # clip all angles to +/-180 degrees
+        # Clip all angles to +/-180 degrees
         new_angles = np.clip(new_angles, -180, 180)
 
-        #tolerance           = 10
-        ori_diff = self._orientation_diff()
-        ori_hold = np.all(ori_diff <= self.tolerance) or np.all(ori_diff >= (360-self.tolerance))      
-        traj_hold = (self._distance('trajectory') < 0.03)
-        bound_hold = np.all(new_tcp_pose[0:3] >= self.lower_bound) and np.all(new_tcp_pose[0:3]<= self.upper_bound) 
-
-        # check if the new tcp pose is within the bounds and update the angles
+        # Check if the new tcp pose is within the observation bounds and check if trajectory 
+        # and orientation deviation are inside the specified tolerances 0 = radius, 1 = orientation
+        bound_hold = np.all(new_tcp_pose[0:3] >= self.start) and np.all(new_tcp_pose[0:3]<= self.stop) 
+        traj_hold = (self._get_deviation('trajectory') < self.tolerances[0])
+        ori_diff = self._get_deviation('orientation')
+        ori_hold = np.all(ori_diff <= self.tolerances[1]) or np.all(ori_diff >= (360-self.tolerances[1]))      
+       
+        # If all conditions are met, update the agent angles and location
         if  bound_hold and traj_hold and ori_hold:
             self._agent_angles = new_angles
-            self._agent_location = new_tcp_pose[:3]
-        else:
-            self._agent_angles = self._agent_angles
-            self._agent_location = self._agent_location
-            #truncated = True
-            #print(f'{(new_tcp_pose[0:3] >= self.lower_bound)} - {np.all(new_tcp_pose[0:3] >= self.lower_bound)}')
-            #print(f'TCP out of bounds! Position Reset.Agent location: {new_tcp_pose[0:3]} Boundaries: {self.lower_bound} - {self.upper_bound}')
+            self._agent_pose   = new_tcp_pose
 
-             
         # Check if the episode has exceeded the maximum number of steps, else increase step count
         if self.num_steps >= self.max_steps:
             truncated = True
         else:
             self.num_steps += 1
         
-        """if :
-            truncated = True
-            self.reset()
-            print("Trajectory exceeded! Episode truncated.")"""
-
         # An episode is done if the agent has reached the target
-        if self._distance('target') == 0:
+        if self._get_deviation('target') == 0:
             terminated = True
             print("Target reached! Episode terminated.")
 
@@ -193,113 +230,54 @@ class RobotArmEnv(gym.Env):
         self.observation     = self._get_obs()
         self.info            = self._get_info()
 
-    
+        # Render the frame if the render mode is set to human
         if self.render_mode == "human":
-            self._render_frame(terminated)
+            end = terminated or truncated
+            self._render_frame(end)
+        #print(f'Action {action} Reward {self.reward} Ori. Diff {self.info["orientation_difference"]} Traj. Dist {self.info["trajectory_distance"]} Tar. Dist {self.info["target_distance"]} Pos. {self.info["tcp_position"]} Ori. {self.info["tcp_orientation"]}')
 
         return self.observation, self.reward, terminated, truncated, self.info
    
-    def _orientation_diff(self):
-        orientation         = self._tcp_pose(self._agent_angles)[3:]
-        orientation_diff    = np.abs(self.target_orientation - orientation)
-        return orientation_diff
-
-    def _distance(self,objective):
-        """Calculate the distance between the agent and the trajectory or the target."""
+    def _get_deviation(self, objective):
+        """Calculate the deviation between the agent location/orientation and the target or the trajectory."""
         if objective == 'target':
-            distance = np.linalg.norm(self._agent_location - self._target_location)
+            deviation = np.linalg.norm(self._agent_pose[:3] - self._target_pose[:3])
+            deviation = np.round(deviation,self.rob.dec[0])
         elif objective == 'trajectory':
-            P = self._agent_location    # point to calculate the distance from
+            P = self._agent_pose[:3]    # point to calculate the distance from
             u = self.start              # starting point of the line
             v = self.stop - self.start  # vector from start to stop (slope)
             # calculate the distance between the point and the line
-            distance = np.linalg.norm(np.cross((P - u),v))/np.linalg.norm(v)
-        distance = np.round(distance,self.dec_obs)
-        return distance
-        
-    """def _reward(self):
-        #Calculate the reward for the agent based on the trajectory.
-        #Returns the reward as a float.
-        
-        # current target
-        #self._target_location = self.trajectory[self._current_waypoint-1] 
-        
-        # Calculate the distance between the agent and the target (current waypoint on the trajectory)
-        #distance = np.linalg.norm(self._agent_location - self._target_location)
-
-        # Reward for getting closer to the target (max reward = 1)
-        #max_distance = np.linalg.norm(self.start - self.stop)
-        #curr_distance = self._distance('target')
-        #target_reward = (1 - curr_distance/max_distance)
-        #target_reward = np.round(1/distance*0.0001,3)
-
-        # compare if current distance is smaller than the last distance
-        curr_distance   = self._distance('target')
-        max_distance    = np.round(np.linalg.norm(self.start - self.stop),self.dec_obs)
-        target_reward   = ((self.last_distance - curr_distance)/max_distance)*10
-
-        # negative reward for each step
-        step_reward = -0.001
-
-        # update last distance
-        self.last_distance = curr_distance
-
-        # Punishment for changing the orientation
-        orientation_diff = self._orientation_diff()
-        orientation_reward = -np.max(orientation_diff/360)*10
-
-        # Punishment (Negative Reward) for moving away from the trajectory
-        distance = self._distance('trajectory')
-        trajectory_reward = -distance*10
-        
-        # Reward for progress along the trajectory
-        progress_reward = 0
-        
-        # If the agent is close to the target and hasn't reached it, move to the next target
-        if distance < 0.003 and self._current_waypoint < len(self.trajectory):
-            self._current_waypoint += 1
-            progress_reward = 1
-            self.reset_angles = self._agent_angles
-            #print(f"Waypoint {self._current_waypoint}/{len(self.trajectory)} reached")
-        
-        #total_reward = dist_reward + progress_reward
-        total_reward = np.round((trajectory_reward + target_reward + step_reward),self.dec_obs)
-        return total_reward"""
-
+            deviation = np.linalg.norm(np.cross((P - u),v))/np.linalg.norm(v)
+            deviation = np.round(deviation,self.rob.dec[0])
+        elif objective == 'orientation':
+            orientation         = self.rob.get_tcp_pose(self._agent_angles)[3:]
+            deviation    = np.abs(self._target_pose[3:] - orientation)
+            deviation = np.round(deviation,self.rob.dec[1])
+        return deviation
+    
     def _reward(self):
         """Calculate the reward for the agent based on the trajectory.
         Returns the reward as a float.
         """
-        # current target
-        #self._target_location = self.trajectory[self._current_waypoint-1] 
-        
-        # Calculate the distance between the agent and the target (current waypoint on the trajectory)
-        #distance = np.linalg.norm(self._agent_location - self._target_location)
-
-        # Reward for getting closer to the target (max reward = 1)
-        #max_distance = np.linalg.norm(self.start - self.stop)
-        #curr_distance = self._distance('target')
-        #target_reward = (1 - curr_distance/max_distance)
-        #target_reward = np.round(1/distance*0.0001,3)
-
-        # compare if current distance is smaller than the last distance
-        curr_distance   = self._distance('target')
-        max_distance    = np.round(np.linalg.norm(self.start - self.stop),self.dec_obs)
+        # Linear reward for moving towards the target
+        curr_distance   = self._get_deviation('target')
+        max_distance    = np.round(np.linalg.norm(self.start - self.stop),self.rob.dec[0])
 
         target_reward   = ((self.last_distance - curr_distance)/max_distance)*10
-        #if target_reward < 0:                   #punishment double of reward
-        #   target_reward = target_reward * 2
+        
+         # If the agent is at the target, give a reward of 5
         if curr_distance == 0:
             target_reward = 5 # = target_reward + 1
 
-        # negative reward for each step
+        # Punishment for each step
         step_reward = -(1 - (curr_distance/max_distance))/100
 
         # update last distance
         self.last_distance = curr_distance
 
         # Punishment for changing the orientation
-        orientation_diff = self._orientation_diff()
+        orientation_diff = self._get_deviation('orientation')
 
         diff_to_last = self.last_orientdiff - orientation_diff
         diff_to_last = np.max(diff_to_last)
@@ -309,368 +287,263 @@ class RobotArmEnv(gym.Env):
         else:
             orientation_reward = -0.08
 
-        #orientation_reward = -np.sum(orientation_diff/360)                   #-np.max(orientation_diff/360)*100
-
-        # Punishment (Negative Reward) for moving away from the trajectory
-        distance = self._distance('trajectory')
+        # Punishment for moving away from the trajectory
+        distance = self._get_deviation('trajectory')
         trajectory_reward = -distance*10
 
-        """# Reward for progress along the trajectory
-        progress_reward = 0
-        
-        # If the agent is close to the target and hasn't reached it, move to the next target
-        if distance < 0.003 and self._current_waypoint < len(self.trajectory):
-            self._current_waypoint += 1
-            progress_reward = 1
-            self.reset_angles = self._agent_angles
-            #print(f"Waypoint {self._current_waypoint}/{len(self.trajectory)} reached")"""
-        
-        #total_reward = dist_reward + progress_reward
-
-        total_reward = np.round((trajectory_reward + target_reward + step_reward + orientation_reward),self.dec_obs)
-        #print(f'Traj {trajectory_reward} target {target_reward} step {step_reward} orientation {orientation_reward} Total {total_reward}')
+        # Sum up the rewards
+        total_reward = np.round((trajectory_reward + target_reward + step_reward + orientation_reward),self.rob.dec[0])
         return total_reward
 
     def _get_obs(self):
         """Calcualte the observation index based on the current x,y,z position of the agent."""
-        pos     = self._agent_location
-        int_pos = np.round((pos - self.lower_bound) / self.resolution).astype(int)
-        x_len   = int(np.round((self.upper_bound[0] - self.lower_bound[0]) / self.resolution))
-        y_len   = int(np.round((self.upper_bound[1] - self.lower_bound[1]) / self.resolution))
+        pos     = self._agent_pose[:3]
+        int_pos = np.round((pos - self.start) / self.resolution).astype(int)
+        x_len   = int(np.round((self.stop[0] - self.start[0]) / self.resolution))
+        y_len   = int(np.round((self.stop[1] - self.start[1]) / self.resolution))
         obs     = int_pos[0] + int_pos[1]*(x_len+1) + int_pos[2]*(x_len+1)*(y_len+1)  # +1 to include the last value
         return obs
 
     def _get_info(self):
+        """Return the information dictionary for the current step."""
         return {
             "joint_angles":                 self._agent_angles,
-            "tcp_position":                 self._agent_location,
-            "tcp_orientation":              self._tcp_pose(self._agent_angles)[3:],
-            "target_distance":              self._distance('target'), 
-            "trajectory_distance":          self._distance('trajectory'),
-            "orientation_difference":       self._orientation_diff(),
+            "tcp_position":                 self._agent_pose[:3],
+            "tcp_orientation":              self._agent_pose[3:],
+            "target_distance":              self._get_deviation('target'), 
+            "trajectory_distance":          self._get_deviation('trajectory'),
+            "orientation_difference":       self._get_deviation('orientation'),
         }
     
-    def _transform(self, joint_angles):
-        """Calculate the individual transformation matrix for each joint 
-        using the Denavit-Hartenberg matrix.
-        """
-        # Calculate the transformation matrix for each joint
-        T = np.zeros((self.num_joints,4,4))
-        for n in range(self.num_joints):
-            # Extract the joint angles, alpha, a and d from the Denavit-Hartenberg matrix
-            tetha = joint_angles[n]
-            alpha = self.dh_matrix[n,2]
-            a = self.dh_matrix[n,0]
-            d = self.dh_matrix[n,1]
-
-            # Convert the angles to radians
-            alpha = np.deg2rad(alpha)
-            tetha = np.deg2rad(tetha)
-
-            T[n, 0, 0] = np.cos(tetha)
-            T[n, 0, 1] = -1 * np.sin(tetha) * np.cos(alpha)
-            T[n, 0, 2] = np.sin(tetha) * np.sin(alpha)
-            T[n, 0, 3] = np.cos(tetha) * a
-
-            T[n, 1, 0] = np.sin(tetha)
-            T[n, 1, 1] = np.cos(tetha) * np.cos(alpha)
-            T[n, 1, 2] = -1 * np.cos(tetha) * np.sin(alpha)
-            T[n, 1, 3] = np.sin(tetha) * a
-
-            T[n, 2, 0] = 0
-            T[n, 2, 1] = np.sin(alpha)
-            T[n, 2, 2] = np.cos(alpha)
-            T[n, 2, 3] = d
-
-            T[n, 3, 0] = 0
-            T[n, 3, 1] = 0
-            T[n, 3, 2] = 0
-            T[n, 3, 3] = 1
-        
-        return T
-    
-    def _forward_kinematics(self, joint_angles):
-        """Calculate the forward kinematics for each joint. 
-        Returns the transformation matrix for each joint in relation to the origin.
-        """
-        T = self._transform(joint_angles)
-        # Calculate the joint poses
-        joints = np.zeros((self.num_joints+1,4,4))
-        for n in range(self.num_joints):
-            if n == 0:
-                joints[n+1] = T[n]
-            else:
-                joints[n+1] = joints[n] @ T[n]
-        return joints
-
-    def _tcp_pose(self, joint_angles):
-        """Calculate the pose of tool center point of the robot arm using the Denavit-Hartenberg matrix.
-        Returns the x,y,z, alpha, beta, gamma position of the end effector.
-        """
-        # Iterate over all axis and calculate the transformation matrix and corresponding joint poses
-        joints = self._forward_kinematics(joint_angles)
-        num_joints = self.num_joints
-        # extract the x,y,z position and the alpha, beta, gamma orientation from the joint poses
-        x = joints[num_joints, 0, 3]
-        y = joints[num_joints, 1, 3]
-        z = joints[num_joints, 2, 3]
-        
-        # TODO check if this is correct (alpha, beta, gamma orientation)
-        beta    = np.arctan2(-joints[num_joints,2,0],np.sqrt(joints[num_joints,0,0]**2 + joints[num_joints,1,0]**2))
-        alpha   = np.arctan2(joints[num_joints,1,0]/np.cos(beta),joints[num_joints,0,0]/np.cos(beta))
-        gamma   = np.arctan2(joints[num_joints,2,1]/np.cos(beta),joints[num_joints,2,2]/np.cos(beta))
-
-        # normalize angles
-        alpha, beta, gamma = alpha % (2*np.pi), beta % (2*np.pi), gamma % (2*np.pi)
-
-        # convert angles to degrees
-        alpha,beta,gamma = np.rad2deg([alpha,beta,gamma])
-
-        # round to decimal places
-        x,y,z = np.round([x,y,z],self.dec_obs)
-        alpha,beta,gamma = np.round([alpha,beta,gamma],self.dec_act)
-
-        # Return the x,y,z position and the alpha, beta, gamma orientation
-        tcp_pose = np.array([x,y,z,alpha,beta,gamma])
-
-       
-        #print(tcp_pose)
-        return tcp_pose
-
     def _render_frame(self, end):
-        plt.style.use('seaborn-v0_8-whitegrid')
+        """Render the current frame of the environment."""
 
+        # Set the base style of the plots
+        plt.style.use('seaborn-v0_8-whitegrid')
+       
+        # Initialize the figure and the subplots
         if self.fig is None and self.render_mode == "human":
-            # Initialize the figure and clock
+            
+            # Enable interactive mode and create a figure
             plt.ion()
             self.fig = plt.figure(layout='constrained', figsize=(10, 6))
 
             # Define the grid layout (3 rows, 2 columns)
             gs = gridspec.GridSpec(6, 2, figure=self.fig)
 
-            # Create subplots for the remaining plots (optional)
+            # Create subplots
             self.ax1 = self.fig.add_subplot(gs[:3, 0], projection='3d')
             self.ax2 = self.fig.add_subplot(gs[:6, 1], projection='3d')  
             self.ax3 = self.fig.add_subplot(gs[3, 0])
             self.ax4 = self.fig.add_subplot(gs[4, 0], sharex = self.ax3)
             self.ax5 = self.fig.add_subplot(gs[5, 0], sharex = self.ax3)
 
-            # remove duplicate x-axis
+            # Remove duplicate x-axis (for those axis who share the x-axis with ax3)
             plt.setp(self.ax4.get_xticklabels(), visible=False)
             plt.setp(self.ax3.get_xticklabels(), visible=False)
 
-            self.step_list = [[],[],[]]
-
-            self.reward_list    = []
-            self.avg_reward     = []
-
-            self._ori_diff  = []
-            self._targ_diff = []
-            self._traj_diff = []
-
+            # Set the title of the figure
             self.fig.suptitle('Robot Arm Environment', fontsize=16)
 
-
-            
-
-
-        # Render the frame if the render mode is set to human and the current step is a multiple of the render skip
+        # Append Data to the episode data dictionary
         if self.render_mode == "human":
-            # Extract the x,y,z position from the joint poses
-            joint_poses = self._forward_kinematics(self._agent_angles)
-            x,y,z = np.round(joint_poses[self.num_joints, :3, 3], self.dec_obs)
-            self.step_list[0].append(x)
-            self.step_list[1].append(y)
-            self.step_list[2].append(z)
+             # Append data to the episode data dictionary
+            [self.episode_data["pose"][idx].append(item) for idx, item in enumerate(self._agent_pose)]
+            self.episode_data["reward"].append(self.reward)
+            self.episode_data["avg_reward"].append(np.mean(self.episode_data["reward"]))
+            #[self.episode_data["deviations"][idx].append(item) for idx, item in enumerate(self.curr_deviations)]
+            self.episode_data["deviations"][0].append(self._get_deviation('target'))
+            self.episode_data["deviations"][1].append(self._get_deviation('trajectory'))
+            self.episode_data["deviations"][2].append(np.max(self._get_deviation('orientation')))
+        # Render the frame if the render mode is set to human 
+        # and the current step is a multiple of the render skip
+        # or if the episode has terminated or been truncated
+        if (self.render_mode == "human") and (self.num_steps % self.render_skip == 0) or end:
+            # Calculate the forward kinematics to get the joint locations
+            joints = self.rob.get_fw_kin(self._agent_angles)
+            # [subplots 1,2] Plot the robot arm and a close up of the observation space 
+            for n, self.ax in enumerate([self.ax1,self.ax2]):
+                # Clear the plot
+                self.ax.clear()
 
-            # plot the robot arm and a close up of the observation space
-            if (self.num_steps % self.render_skip == 0) or end:
-                for n, self.ax in enumerate([self.ax1,self.ax2]):
-                    # Clear the plot
-                    self.ax.clear()
+                # Set the axes limits
+                if n == 0:
+                    x_l = [-0.35 , 0.25]
+                    y_l = [-0.35 , 0.35]
+                    z_l = [0    , 0.5]
+                    self.ax1.set_title('Robot Arm')
+                    self.ax1.set(xlim3d=x_l)
+                    self.ax1.set(ylim3d=y_l)
+                    self.ax1.set(zlim3d=z_l)
+        
+                elif n == 1:
+                    x_l = [self.start[0], self.stop[0]]
+                    y_l = [self.start[1], self.stop[1]]
+                    z_l = [self.start[2], self.stop[2]]
+                    self.ax2.set_title('Observation Space')
 
-                    # Set the axes limits
-                    if n == 0:
-                        x_l = [-0.35 , 0.25]
-                        y_l = [-0.35 , 0.35]
-                        z_l = [0    , 0.5]
-                        self.ax1.set_title('Robot Arm')
-                        self.ax1.set(xlim3d=x_l)
-                        self.ax1.set(ylim3d=y_l)
-                        self.ax1.set(zlim3d=z_l)
-           
-                    elif n == 1:
-                        x_l = [self.lower_bound[0], self.upper_bound[0]]
-                        y_l = [self.lower_bound[1], self.upper_bound[1]]
-                        z_l = [self.lower_bound[2], self.upper_bound[2]]
-                        self.ax2.set_title('Observation Space')
+                    self.ax2.set(xlim3d=x_l, xlabel='X')
+                    self.ax2.set(ylim3d=y_l, ylabel='Y')
+                    self.ax2.set(zlim3d=z_l, zlabel='Z')
 
-                        self.ax2.set(xlim3d=x_l, xlabel='X')
-                        self.ax2.set(ylim3d=y_l, ylabel='Y')
-                        self.ax2.set(zlim3d=z_l, zlabel='Z')
-                    
+                # Draw the trajetory as a gray dotted line 
+                t_x = [self.start[0], self.stop[0]]
+                t_y = [self.start[1], self.stop[1]]
+                t_z = [self.start[2], self.stop[2]]   
+                self.ax.plot(t_x,t_y,t_z,label='Trajectory', 
+                             color = 'gray', linewidth = 1, 
+                             linestyle = 'dotted')
+                
+                # Draw the observation space
+                # Calculate edge lengths based on corner points
+                start = self.start
+                edge  = self.stop - self.start
 
+                # Define all 8 vertices of the cube based on corner points and edge lengths
+                vertices = np.array([
+                    start,
+                    [start[0] + edge[0], start[1], start[2]],
+                    [start[0] + edge[0], start[1] + edge[1], start[2]],
+                    [start[0], start[1] + edge[1], start[2]],
+                    [start[0], start[1], start[2] + edge[2]],
+                    [start[0] + edge[0], start[1], start[2] + edge[2]],
+                    [start[0] + edge[0], start[1] + edge[1], start[2] + edge[2]],
+                    [start[0], start[1] + edge[1], start[2] + edge[2]],
+                ])
 
-                    
-                    x = np.zeros(shape=(self.num_joints+2))
-                    y = np.zeros(shape=(self.num_joints+2))
-                    z = np.zeros(shape=(self.num_joints+2))
-                    
-                    for n in range(self.num_joints+1):
-                        x[n+1] = joint_poses[n, 0, 3]
-                        y[n+1] = joint_poses[n, 1, 3]
-                        z[n+1] = joint_poses[n, 2, 3]
-
-                    # Draw the trajetory as a gray dotted line 
-                    t_x = [self.start[0], self.stop[0]]
-                    t_y = [self.start[1], self.stop[1]]
-                    t_z = [self.start[2], self.stop[2]]   
-                    self.ax.plot(t_x,t_y,t_z,label='Trajectory', color = 'gray', linewidth = 1, linestyle = 'dotted')
-                    
-                    # Draw the observation space
-                    # Calculate edge lengths based on corner points
-                    start           = self.lower_bound
-                    edge            = self.upper_bound - self.lower_bound
-
-                    # Define all 8 vertices of the cube based on corner points and edge lengths
-                    vertices = np.array([
-                        start,
-                        [start[0] + edge[0], start[1], start[2]],
-                        [start[0] + edge[0], start[1] + edge[1], start[2]],
-                        [start[0], start[1] + edge[1], start[2]],
-                        [start[0], start[1], start[2] + edge[2]],
-                        [start[0] + edge[0], start[1], start[2] + edge[2]],
-                        [start[0] + edge[0], start[1] + edge[1], start[2] + edge[2]],
-                        [start[0], start[1] + edge[1], start[2] + edge[2]],
+                # Extract edges from vertices (each edge is a pair of vertices)
+                edges = np.array([
+                    [vertices[0], vertices[1]],
+                    [vertices[1], vertices[2]],
+                    [vertices[2], vertices[3]],
+                    [vertices[3], vertices[0]],
+                    [vertices[4], vertices[5]],
+                    [vertices[5], vertices[6]],
+                    [vertices[6], vertices[7]],
+                    [vertices[7], vertices[4]],
+                    [vertices[0], vertices[4]],  # Corrected: include bottom edges
+                    [vertices[1], vertices[5]],
+                    [vertices[2], vertices[6]],
+                    [vertices[3], vertices[7]]
                     ])
 
-                    # Extract edges from vertices (each edge is a pair of vertices)
-                    edges = np.array([
-                        [vertices[0], vertices[1]],
-                        [vertices[1], vertices[2]],
-                        [vertices[2], vertices[3]],
-                        [vertices[3], vertices[0]],
-                        [vertices[4], vertices[5]],
-                        [vertices[5], vertices[6]],
-                        [vertices[6], vertices[7]],
-                        [vertices[7], vertices[4]],
-                        [vertices[0], vertices[4]],  # Corrected: include bottom edges
-                        [vertices[1], vertices[5]],
-                        [vertices[2], vertices[6]],
-                        [vertices[3], vertices[7]]
-                        ])
+                # Plot each edge using a separate line plot
+                for edge in edges:
+                    self.ax.plot(*edge.T, color='red', linewidth=1, linestyle = 'dotted', alpha=0.5)
+                self.ax.plot(*edge.T[0], color='red', linewidth=1, 
+                             linestyle = 'dotted', label='Obs. Space',
+                             alpha=0.5)
 
-                    # Plot each edge using a separate line plot
-                    for edge in edges:
-                        self.ax.plot(*edge.T, color='red', linewidth=1, linestyle = 'dotted', alpha=0.5)
-                    self.ax.plot(*edge.T[0], color='red', linewidth=1, linestyle = 'dotted', label='Obs. Space', alpha=0.5)
+                # Draw the robot arm
+                j_x, j_y, j_z = [np.zeros(shape=(self.rob.num_joints+2)) for _ in range(3)]
+                for idx, item in enumerate([j_x, j_y, j_z]):
+                    item[1:8] = joints[:,idx,3]
+                self.ax.plot(j_x, j_y, j_z, markerfacecolor='k', 
+                             markeredgecolor='b', marker='o', 
+                             markersize=5, alpha=0.7, linewidth = 4)
 
-                    # Draw the robot arm
-                    self.ax.plot(x, y, z, markerfacecolor='k', markeredgecolor='b', marker='o', markersize=5, alpha=0.7, linewidth = 4)
+                # Draw the tool center point and visualize the orienation
+                tcp_x, tcp_y, tcp_z = [np.zeros(shape=(4)) for _ in range(3)]
 
-                    # Draw the tool center point (euler angle representation of the end effector orientation)
-                    tcp_x = np.zeros(shape=(4))
-                    tcp_y = np.zeros(shape=(4))
-                    tcp_z = np.zeros(shape=(4))
+                scale = 0.05             # scale the length of the vectors
+                m = self.rob.num_joints  # last joint is the end effector
 
-                    scale = 0.05                    # scale the length of the vectors
-                    m = self.num_joints             # last joint is the end effector
+                for n in range(4):
+                    tcp_x[n] = joints[m, 0, n]*scale
+                    tcp_y[n] = joints[m, 1, n]*scale
+                    tcp_z[n] = joints[m, 2, n]*scale
+                
+                # Iterate through the tcp points and colors
+                for n,c in zip(range(3),['r','g','b']):
+                    self.ax.plot([j_x[m+1],tcp_x[n]+j_x[m+1]], 
+                                    [j_y[m+1],tcp_y[n]+j_y[m+1]], 
+                                    [j_z[m+1],tcp_z[n]+j_z[m+1]], 
+                                    color = c, markersize=5, alpha=0.7, linewidth = 1)
+                
+                # Draw a line for points the end effector visited
+                self.ax.plot(self.episode_data['pose'][0],
+                            self.episode_data['pose'][1],
+                            self.episode_data['pose'][2],
+                            color = 'g', alpha=0.7, linewidth = 1)
+                
+                # Draw plot and flush events to enable interactive mode
+                self.ax.tick_params(axis='both', which='major', labelsize=7, pad = -2.5)
+                self.fig.canvas.draw() # draw new contents
+                self.fig.canvas.flush_events() 
 
-                    for n in range(4):
-                        tcp_x[n] = joint_poses[m, 0, n]*scale
-                        tcp_y[n] = joint_poses[m, 1, n]*scale
-                        tcp_z[n] = joint_poses[m, 2, n]*scale
-                    
-                    # iterate through the tcp points and colors
-                    for n,c in zip(range(3),['r','g','b']):
-                        self.ax.plot([x[m+1],tcp_x[n]+x[m+1]], [y[m+1],tcp_y[n]+y[m+1]], [z[m+1],tcp_z[n]+z[m+1]], color = c, markersize=5, alpha=0.7, linewidth = 1)
-                    
-                    k = 1           # joint is the end effector
-
-                    for n in range(4):
-                        tcp_x[n] = joint_poses[k, 0, n]*scale
-                        tcp_y[n] = joint_poses[k, 1, n]*scale
-                        tcp_z[n] = joint_poses[k, 2, n]*scale
-                    
-                    # draw a line for points the end effector visited
-                    self.ax.plot(self.step_list[0],self.step_list[1],self.step_list[2],color = 'g', alpha=0.7, linewidth = 1)
-                    
-                    # iterate through the tcp points and colors
-                    for n,c in zip(range(3),['r','g','b']):
-                        self.ax.plot([x[k+1],tcp_x[n]+x[k+1]], [y[k+1],tcp_y[n]+y[k+1]], [z[k+1],tcp_z[n]+z[k+1]], color = c, markersize=5, alpha=0.7, linewidth = 1)
-                    
-                    # Draw plot and flush events to enable interactive mode
-                    #self.ax1.legend(loc = 'upper right',frameon = True, fancybox = True, shadow = True, framealpha = 1, prop={'size': 6})
-                    #self.ax2.legend(loc = 'upper right',frameon = True, fancybox = True, shadow = True, framealpha = 1, prop={'size': 8})
-                    self.ax.tick_params(axis='both', which='major', labelsize=7, pad = -2.5)
-                    self.fig.canvas.draw() # draw new contents
-                    self.fig.canvas.flush_events() 
-
-
-            # plot the reward and distance to the target
+            # [subplot 3] Plot reward and average reward
             self.ax3.clear()
-            self.reward_list.append(self.reward)
-            self.avg_reward.append(np.mean(self.reward_list))
-            self.ax3.plot(self.reward_list, label='$R$', color = 'red', marker = 'o', linewidth = 0, markersize = 1, alpha = 0.5)
-            self.ax3.plot(self.avg_reward, label='$\overline{R}$', color = 'blue', linestyle = '--', alpha = 0.5, linewidth = 1)
-            self.ax3.legend(loc = 'upper left',frameon = True, fancybox = True, shadow = True, framealpha = 1, prop={'size': 6})
-            self.ax3.set_ylabel('Reward',rotation=0, va = 'center_baseline') 
+            self.ax3.plot(self.episode_data['reward'], 
+                          label='$R$', color = 'red', 
+                          marker = 'o', linewidth = 0, 
+                          markersize = 1, alpha = 0.5)
+            self.ax3.plot(self.episode_data['avg_reward'], 
+                          label='$\overline{R}$', color = 'blue', 
+                          linestyle = '--', alpha = 0.5, linewidth = 1)
+            self.ax3.legend(loc = 'upper left',frameon = True, 
+                            fancybox = True, shadow = True, 
+                            framealpha = 1, prop={'size': 6})
+            self.ax3.set_ylabel('Reward',rotation=0, 
+                                va = 'center_baseline') 
             self.ax3.yaxis.set_label_coords(-0.2,0.5)
             self.ax3.set_xticks([])
 
-            # plot general information into a table
+            # [subplot 4] Plot graph for orientation deviation
             self.ax4.clear()
-            """self.ax4.axis('off')
-            self.ax4.table(cellText=[['Position',self.info['tcp_position']],
-                                     ['Orientation',self.info['tcp_orientation']],
-                                     ['Target Distance',self.info['target_distance']],
-                                     ['Trajectory Distance',self.info['trajectory_distance']]],
-                            cellLoc='center',
-                            loc='center',
-                            fontsize=24)"""
-        
-            info = self.info
-            self._ori_diff.append(np.max(info['orientation_difference']))
-            self._targ_diff.append(info['target_distance'])
-            self._traj_diff.append(info['trajectory_distance'])
-
-            self.ax4.plot(self._ori_diff, label='Orientation', color = 'red', linewidth = 1, alpha = 0.5, linestyle = '--')
-            self.ax4.set_ylabel('Ori. Error\n'+r'$max(\alpha,\beta,\gamma)$',rotation=0, va = 'center_baseline') 
+            self.ax4.plot(self.episode_data['deviations'][2], 
+                          label='Orientation', color = 'red', 
+                          linewidth = 1, alpha = 0.5, linestyle = '--')
+            self.ax4.set_ylabel('Ori. Error\n'+r'$max(\alpha,\beta,\gamma)$',
+                                rotation=0, va = 'center_baseline') 
             self.ax4.yaxis.set_label_coords(-0.2,0.5)
-            self.ax4.legend(loc = 'upper left',frameon = True, fancybox = True, shadow = True, framealpha = 1, prop={'size': 6}, handlelength = 1)
+            self.ax4.legend(loc = 'upper left',frameon = True, 
+                            fancybox = True, shadow = True, 
+                            framealpha = 1, prop={'size': 6}, handlelength = 1)
             
+            # [subplot 5] Plot graph for target and trajectory deviation
             self.ax5.clear()
-            self.ax5.plot(self._targ_diff, label='$Target $', color = 'blue', linewidth = 1, alpha = 0.5, linestyle = '--')
-            self.ax5.plot(self._traj_diff, label='$Trajectory$', color = 'green', linewidth = 1, alpha = 0.5, linestyle = '--')
-            self.ax5.set_ylabel('Pos. Error \n $|(x;y;z)|$',rotation=0, va = 'center_baseline') 
+            self.ax5.plot(self.episode_data['deviations'][0], 
+                          label='$Target $', color = 'blue', 
+                          linewidth = 1, alpha = 0.5, linestyle = '--')
+            self.ax5.plot(self.episode_data['deviations'][1], 
+                          label='$Trajectory$', color = 'green', 
+                          linewidth = 1, alpha = 0.5, linestyle = '--')
+            self.ax5.set_ylabel('Pos. Error \n $|(x;y;z)|$',
+                                rotation=0, va = 'center_baseline') 
             self.ax5.yaxis.set_label_coords(-0.2,0.5)
-            self.ax5.legend(loc = 'upper left',frameon = True, fancybox = True, shadow = True, framealpha = 1, prop={'size': 6}, handlelength = 1)
+            self.ax5.legend(loc = 'upper left',frameon = True, 
+                            fancybox = True, shadow = True, 
+                            framealpha = 1, prop={'size': 6}, handlelength = 1)
             self.ax5.set_xlabel('Steps')
 
-            # remove duplicate x-axis
+            # Remove duplicate x-axis
             plt.setp(self.ax4.get_xticklabels(), visible=False)
             plt.setp(self.ax3.get_xticklabels(), visible=False)
             if end:
-                self.close()
+                self._save_frame()
+               
+    def _save_frame(self):
+        """Save the figure as a .png file in the current directory if not specified otherwise"""
+        if self.save_location != '':
+            plt.savefig(f'{self.save_location}//robotarm_env_steps{len(self.episode_data["reward"])}.png')
+        else:
+            plt.savefig(f'robotarm_env_steps{len(self.episode_data["reward"])}.png')   
 
-    def close(self):
-        # Close the figure
-        if self.fig is not None:
-            plt.savefig(f'robot-arm-env//results//robotarm_env_steps{len(self.reward_list)}')
-            #plt.savefig(f'robot-arm-env//results//mccepisodes{num_episodes}epsilon{eps_str}gamma{gamma_str}.png')
-            #plt.savefig(f'robot-arm-env//results//robotarm_env_steps{len(self.reward_list)}.png')
-            plt.close(self.fig)
-            self.fig = None
-            self.ax = None
 
+# Example usage of the RobotArmEnv class
 if __name__ == "__main__":
-    np.set_printoptions(precision=2, suppress=True)
-    env = RobotArmEnv(render_mode="human")
-    observation, info = env.reset()
+    from robot_arm import RobotArm
+    
+    robot_arm   = RobotArm(dh_matrix, init_angles, dec_prec)
 
-    for _ in range(1000):
+    observation_dim = [0.002, 0.004, 0.003]
+    env = RobotArmEnv(robot_arm, observation_dim, render_mode="human")
+    observation, info = env.reset()
+    end = False
+    
+    while not end:
         action = env.action_space.sample()  # this is where you would insert your policy
         obs, reward, term, trunc, info = env.step(action)
-        print(obs, reward, info)
-
-    #env.close()
+        end = term or trunc
+        print(info)
+    
