@@ -112,14 +112,15 @@ The Robot Arm Environment has the following dependencies:
 
 ### Demo
 
-![Robot Arm Environment Demo](assets/robot_arm_env_demo.gif)
 The demo showcases the Robot Arm Environment in action. It was trained using the provided agent_multi_section.py example code with 2 sections, each having a size of 2mm x 4mm x 3mm. The multi_section.py code utilizes the Monte Carlo control algorithm, which can be found in the rl_algorithm folder. The GIF demonstrates the capabilities of the environment in simulating the movement of the robotic arm within this workspace.
+
+![Robot Arm Environment Demo](assets/robot_arm_env_demo.gif)
 
 ## Class Diagram
 
 The class diagram below illustrates the structure of the Robot Arm Environment codebase. It provides a visual representation of the various classes and their relationships within the environment.
 
-![Class Diagram](assets\class_diagramm.drawio.png)
+![Class Diagram](assets\class_diagramm.png)
 
 
 ### License
