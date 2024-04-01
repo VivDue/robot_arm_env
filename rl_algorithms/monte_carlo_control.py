@@ -67,26 +67,34 @@ class MonteCarloControl:
             print(f'Episode {n+1}/{self.n_episodes} - Epsilon: {epsilon}')
 
             # Generate an episode using the current action-value function
-            episode, final_joint_angles = self._generate_episode(epsilon)
+            episode, final_joint_angles, _ = self._generate_episode(epsilon)
             
             # Update the action values using the episode generated
             self._update_action_values(episode)
             
         return self.Q, final_joint_angles
 
-    def test(self):
-        """Test the the agent using the learned policy."""
+    def test(self, render_mode = "human"):
+        """Test the the agent using the learned policy.
+        Args:
+            render_mode (str): 
+                The mode to render the environment. 
+                Default is "human".
+        """
         # Set the epsilon value to zero for testing
         epsilon = 0
 
-        # Set the render mode to human for testing
-        self.env.render_mode = "human"
+        if render_mode == "human":
+            # Set the render mode to human for testing
+            self.env.render_mode = "human"
 
         # Generate an episode using the current policy
-        self._generate_episode(epsilon)
+        _, _, terminated = self._generate_episode(epsilon)
 
         # Reset the render mode to None
-        self.env.render_mode = "None"          
+        self.env.render_mode = "None"      
+
+        return terminated    
         
     def _generate_episode(self, epsilon):
         """Generate an episode using the current policy."""
@@ -132,7 +140,7 @@ class MonteCarloControl:
         final_joint_angles = info["joint_angles"]
         print(f'Final Joint Angles: {final_joint_angles}')
 
-        return episode, final_joint_angles
+        return episode, final_joint_angles, terminated
     
     def _update_eval_data(self, info, episode, squared_error, terminated):
         """Update the evaluation data dictionary."""
@@ -349,7 +357,7 @@ if __name__ == "__main__":
     env = RobotArmEnv(robot_arm, observation_dim, render_mode=None)
 
     # Define the monte carlo control agent
-    n_episodes = 500
+    n_episodes = 1
     agent = MonteCarloControl(env, n_episodes)
     agent.train()
     agent.show_results()
