@@ -31,7 +31,7 @@ env             = RobotArmEnv(robot_arm, observation_dim, render_mode=None, rend
 
 
 # load the Q matrix from the saved file
-save_file = 'examples//example_results//2_sections_Q_values.npy'
+save_file = 'example_results//2_sections_Q_values_prepared.npy'
 Q         = np.load(save_file)
 
 # Define the monte carlo control agent
