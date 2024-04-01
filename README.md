@@ -50,10 +50,11 @@ To install the Robot Arm Environment and its dependencies, follow these steps:
     source .venv/bin/activate
     ```
 
-5. Install the required dependencies:
+5. Install the required dependencies and replace the your_path with your save path:
 
     ```bash
-    pip install -r requirements.txt
+    python -m pip install --upgrade pip
+    python -m pip install -r your_path/requirements.txt
     ```
 
 6. You are now ready to use the Robot Arm Environment in your Python projects.
